@@ -11,5 +11,5 @@ print(a==b)
 print(a<b)
 print(a>=b)
 print("assignment operators")
-print("Shreyash Mhatre")
+print("Shreyash fintel")
 
