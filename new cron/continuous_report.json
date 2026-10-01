@@ -1,0 +1,42 @@
+{
+    "iteration": 78,
+    "timestamp": "2026-10-01 11:49:51",
+    "grand_total": 506.053,
+    "details": [
+        {
+            "row_id": 1,
+            "input_a": 10.5,
+            "input_b": 20.3,
+            "result": 30.8,
+            "status": "SUCCESS"
+        },
+        {
+            "row_id": 2,
+            "input_a": 100,
+            "input_b": 250,
+            "result": 350,
+            "status": "SUCCESS"
+        },
+        {
+            "row_id": 3,
+            "input_a": -50,
+            "input_b": 75.25,
+            "result": 25.25,
+            "status": "SUCCESS"
+        },
+        {
+            "row_id": 4,
+            "input_a": 0.001,
+            "input_b": 0.002,
+            "result": 0.003,
+            "status": "SUCCESS"
+        },
+        {
+            "row_id": 5,
+            "input_a": 42,
+            "input_b": 58,
+            "result": 100,
+            "status": "SUCCESS"
+        }
+    ]
+}

@@ -6,6 +6,16 @@ import json
 import datetime
 import os
 import sys
+import fcntl
+
+# --- SINGLE INSTANCE LOCK (Prevents Cron overlapping) ---
+LOCK_FILE = os.path.expanduser("/tmp/sysMonitor.lock")
+lock_file_ptr = open(LOCK_FILE, "w")
+try:
+    fcntl.flock(lock_file_ptr, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except IOError:
+    # Another instance is already running, exit silently
+    sys.exit(0)
 
 INTERVAL = 5 # seconds
 
@@ -21,7 +31,8 @@ class Colors:
     BOLD = '\033[1m'
 
 def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
+    if sys.stdout.isatty() and 'TERM' in os.environ:
+        os.system('cls' if os.name == 'nt' else 'clear')
 
 def get_log_file_path():
     now = datetime.datetime.now()
@@ -39,7 +50,6 @@ def get_top_cpu_processes(n=10):
             pass
     
     cpu_count = psutil.cpu_count() or 1
-    
     processes.sort(key=lambda p: (p['cpu_percent'] or 0.0) / cpu_count, reverse=True)
     
     top = []
@@ -81,20 +91,18 @@ def get_top_ram_processes(n=10):
 def get_total_disk_usage():
     total_size = 0
     total_used = 0
-    
     seen_devices = set()
+    
     for part in psutil.disk_partitions(all=False):
         if os.name == 'nt':
             if 'cdrom' in part.opts or part.fstype == '':
                 continue
         else:
-            # Ignore virtual, loop/snap, and network mounts
             if 'snap' in part.mountpoint or 'docker' in part.mountpoint or part.fstype.lower() in (
                 'squashfs', 'tmpfs', 'devtmpfs', 'overlay', 'nfs', 'nfs4', 'cifs', 'smb', 'fuse.sshfs', 'autofs'
             ):
                 continue
                 
-        # Prevent double-counting the same underlying physical device/partition mounted in multiple places
         if part.device in seen_devices:
             continue
         seen_devices.add(part.device)
@@ -121,12 +129,10 @@ def collect_metrics(prev_disk_io, prev_net_io, prev_time):
     curr_time = time.time()
     time_delta = curr_time - prev_time
     
-    # 1. CPU
     cpu_usage = psutil.cpu_percent(interval=None)
     cpu_free = 100.0 - cpu_usage
     top_cpu = get_top_cpu_processes(n=10)
     
-    # 2. RAM and SWAP
     mem = psutil.virtual_memory()
     total_ram_gb = round(mem.total / (1024**3), 2)
     available_ram_gb = round(mem.available / (1024**3), 2)
@@ -140,8 +146,6 @@ def collect_metrics(prev_disk_io, prev_net_io, prev_time):
     swap_perc = round(swap.percent, 2)
     
     top_ram = get_top_ram_processes(n=10)
-    
-    # 3. Disk Space & Activity
     disk_stats = get_total_disk_usage()
     
     curr_disk_io = psutil.disk_io_counters()
@@ -160,7 +164,6 @@ def collect_metrics(prev_disk_io, prev_net_io, prev_time):
             disk_activity_perc = (delta_busy_ms / (time_delta * 1000.0)) * 100.0
             disk_activity_perc = round(min(100.0, max(0.0, disk_activity_perc)), 2)
 
-    # 4. Network
     curr_net_io = psutil.net_io_counters()
     sent_speed_mb = 0.0
     recv_speed_mb = 0.0
@@ -170,7 +173,6 @@ def collect_metrics(prev_disk_io, prev_net_io, prev_time):
         sent_speed_mb = (sent_bytes / (1024 * 1024)) / time_delta
         recv_speed_mb = (recv_bytes / (1024 * 1024)) / time_delta
     
-    # 5. Battery
     battery = psutil.sensors_battery() if hasattr(psutil, 'sensors_battery') else None
     if battery is None:
         battery_percent = "N/A"
@@ -239,7 +241,6 @@ def print_dashboard(metrics, log_file):
     print(f"{c.BOLD}SYSTEM MONITOR V2{c.RESET} | Time: {metrics['Timestamp']}")
     print(f"{c.CYAN}{'-'*60}{c.RESET}")
     
-    # CPU
     cpu = metrics['CPU']
     cpu_color = c.GREEN if cpu['Used'] < 50 else (c.YELLOW if cpu['Used'] < 85 else c.RED)
     print(f"{c.BOLD}[ CPU ]{c.RESET} Used: {cpu_color}{cpu['Used']}%{c.RESET} | Free: {cpu['Free']}%")
@@ -248,7 +249,6 @@ def print_dashboard(metrics, log_file):
         print(f"        {c.YELLOW}Top 5 (Logged 10):{c.RESET} {top_cpu_str}")
     print(f"{c.CYAN}{'-'*60}{c.RESET}")
     
-    # RAM and SWAP
     ram = metrics['RAM']
     swap = metrics['SWAP']
     ram_color = c.GREEN if ram['UsedPercent'] < 60 else (c.YELLOW if ram['UsedPercent'] < 85 else c.RED)
@@ -262,7 +262,6 @@ def print_dashboard(metrics, log_file):
             print(f"          {i+1}. {tp.get('ProcessName', 'Unknown')} (PID {tp.get('Id', '')}) - {tp.get('RAM_MB', 0)} MB ({tp.get('RAM_%', 0)}%)")
     print(f"{c.CYAN}{'-'*60}{c.RESET}")
     
-    # DISK
     disk = metrics['Disk']
     space = disk['Space']
     rw = disk['ReadWrite']
@@ -273,12 +272,10 @@ def print_dashboard(metrics, log_file):
     print(f"         {c.YELLOW}I/O:{c.RESET} Read {rw['ReadMBs']} MB/s | Write {rw['WriteMBs']} MB/s | Activity: {activity}%")
     print(f"{c.CYAN}{'-'*60}{c.RESET}")
 
-    # NETWORK
     net = metrics['Network']
     print(f"{c.BOLD}[ NET ]{c.RESET} Upload: {net['UploadMBs']} MB/s | Download: {net['DownloadMBs']} MB/s")
     print(f"{c.CYAN}{'-'*60}{c.RESET}")
     
-    # BATTERY
     batt = metrics['Battery']
     if batt['Percentage'] == "N/A":
         print(f"{c.BOLD}[ BATTERY ]{c.RESET} Not Available (No battery detected)")
@@ -291,10 +288,7 @@ def print_dashboard(metrics, log_file):
     print(f"{c.BOLD}{c.GREEN}Data logged to {log_file}... (Press Ctrl+C to stop){c.RESET}")
 
 def main():
-    # Prime the overall CPU percent calculation
     psutil.cpu_percent()
-    
-    # Prime the process iterator so CPU percentages are calculated accurately over the interval
     list(psutil.process_iter(['cpu_percent']))
     
     prev_disk_io = psutil.disk_io_counters()
